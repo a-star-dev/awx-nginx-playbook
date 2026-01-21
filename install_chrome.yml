@@ -1,5 +1,5 @@
 ---
-- name: Enforce single-browser policy (Google Chrome only)
+- name: Enforce single Google Chrome installation (GNOME-safe)
   hosts: all
   become: yes
   gather_facts: yes
@@ -7,16 +7,14 @@
   vars:
     allowed_browser: google-chrome-stable
 
-  tasks:
-
   #####################################################################
   # PREFLIGHT DETECTION
   #####################################################################
+  tasks:
 
-    - name: Preflight | Detect installed browser packages
-      shell: |
-        dpkg -l | egrep -i "chrome|chromium" || true
-      register: browser_packages
+    - name: Preflight | Detect installed APT browsers
+      shell: dpkg -l | egrep -i "chrome|chromium" || true
+      register: apt_browsers
       changed_when: false
       when: ansible_os_family == "Debian"
 
@@ -35,12 +33,12 @@
     - name: Preflight report
       debug:
         msg:
-          - "APT browsers: {{ browser_packages.stdout | default('none') }}"
-          - "Snap browsers: {{ snap_browsers.stdout | default('none') }}"
-          - "Flatpak browsers: {{ flatpak_browsers.stdout | default('none') }}"
+          - "APT: {{ apt_browsers.stdout | default('none') }}"
+          - "Snap: {{ snap_browsers.stdout | default('none') }}"
+          - "Flatpak: {{ flatpak_browsers.stdout | default('none') }}"
 
   #####################################################################
-  # ENFORCE SINGLE-BROWSER POLICY (AUTO-CLEAN)
+  # ENFORCE SINGLE-BROWSER POLICY
   #####################################################################
 
     - name: Remove Chromium (APT)
@@ -74,10 +72,20 @@
       when: ansible_os_family == "Debian"
 
   #####################################################################
-  # DESKTOP AUTO-CLEAN (EVERY RUN)
+  # DESKTOP & APP CLEANUP (CRITICAL FIX)
   #####################################################################
 
-    - name: Remove system Chromium desktop entries
+    - name: Remove duplicate Chrome desktop application (GNOME)
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /usr/share/applications/com.google.Chrome.desktop
+        - /home/*/.local/share/applications/com.google.Chrome.desktop
+      ignore_errors: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Remove leftover Chromium desktop entries
       file:
         path: "{{ item }}"
         state: absent
@@ -87,25 +95,6 @@
         - /var/lib/snapd/desktop/applications/chromium_chromium.desktop
       ignore_errors: yes
       when: ansible_os_family == "Debian"
-
-    - name: Remove user Chrome/Chromium desktop entries
-      find:
-        paths: /home
-        patterns:
-          - google-chrome.desktop
-          - chromium*.desktop
-        recurse: yes
-      register: desktop_files
-      when: ansible_os_family == "Debian"
-
-    - name: Delete user desktop artifacts
-      file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ desktop_files.files }}"
-      when:
-        - ansible_os_family == "Debian"
-        - desktop_files.matched | int > 0
 
   #####################################################################
   # INSTALL APPROVED BROWSER
@@ -131,10 +120,28 @@
       when: ansible_os_family == "Debian"
 
   #####################################################################
-  # FINALIZE (MENU CONSISTENCY)
+  # GNOME FAVORITES FIX (PER-USER)
   #####################################################################
 
-    - name: Update desktop database
+    - name: Remove duplicate Chrome from GNOME favorites
+      become: false
+      shell: |
+        gsettings set org.gnome.shell favorite-apps \
+        "$(gsettings get org.gnome.shell favorite-apps | \
+        sed "s/'com.google.Chrome.desktop', //; s/, 'com.google.Chrome.desktop'//; s/'com.google.Chrome.desktop'//")"
+      environment:
+        DISPLAY: ":0"
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_uid }}"
+      when:
+        - ansible_env.XDG_CURRENT_DESKTOP is defined
+        - "'GNOME'" in ansible_env.XDG_CURRENT_DESKTOP
+      ignore_errors: yes
+
+  #####################################################################
+  # FINALIZE
+  #####################################################################
+
+    - name: Rebuild desktop application database
       command: update-desktop-database
       ignore_errors: yes
       when: ansible_os_family == "Debian"
