@@ -1,10 +1,14 @@
 ---
-- name: Install Google Chrome on Linux
+- name: Install Google Chrome on Linux (Clean Install)
   hosts: all
   become: yes
   gather_facts: yes
 
   tasks:
+
+    # -------------------------------
+    # Debian / Ubuntu
+    # -------------------------------
 
     - name: Install dependencies (Debian-based)
       apt:
@@ -32,6 +36,25 @@
         name: google-chrome-stable
         state: present
       when: ansible_os_family == "Debian"
+
+    # -------------------------------
+    # Cleanup duplicate Chrome sources
+    # -------------------------------
+
+    - name: Remove snap chromium if present (prevents duplicate Chrome icons)
+      command: snap remove chromium
+      when: ansible_os_family == "Debian"
+      ignore_errors: yes
+
+    - name: Remove duplicate user Chrome desktop entry
+      file:
+        path: "/home/{{ ansible_user }}/.local/share/applications/google-chrome.desktop"
+        state: absent
+      when: ansible_os_family == "Debian"
+
+    # -------------------------------
+    # RHEL / CentOS / Rocky / Alma
+    # -------------------------------
 
     - name: Add Google Chrome repository (RHEL-based)
       yum_repository:
